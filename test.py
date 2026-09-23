@@ -1,5 +1,4 @@
 import cv2 as cv
-import sys
 import matplotlib.pyplot as plt
 import numpy as np
 import math
@@ -10,13 +9,13 @@ YELLOW_MAX_HSV = np.array([40, 255, 255])
 YELLOW_WRAP_MIN_HSV = np.array([175, 30, 60])
 YELLOW_WRAP_MAX_HSV = np.array([179, 255, 255])
 
-
 CANNY_LOW = 20
 CANNY_HIGH = 60
 GUASSIAN_KERNAL = (3, 3)
 
+
 def main():
-    img = cv.imread("imgs/850_cam_image_array_.jpg")
+    img = cv.imread("imgs/437_cam_image_array_.jpg")
 
     roi_mask = np.zeros_like(cv.cvtColor(img, cv.COLOR_BGR2GRAY))
 
@@ -36,20 +35,42 @@ def main():
     left_candidates = get_left_candidates(img, roi_mask)
     right_candidates = get_right_candidates(img, roi_mask)
 
-    gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
-    blur = cv.GaussianBlur(gray, GUASSIAN_KERNAL, 0)
+    filtered_left_mask, labels, stats, accepted_labels = filter_left_components(left_candidates)
+    left_edge_points = get_left_edge_points(labels, stats, accepted_labels)
 
-    components = get_components(left_candidates, 3)
-    cc_img = draw_components(img, components)
+    img_points = img.copy()
+    for x, y, in left_edge_points:
+        cv.circle(img_points, (x, y), 1, (0, 0, 255), -1)
 
-    plot_images(img, left_candidates, cc_img, 
-                titles=[f"original (alphs: {alpha})", "left candidates", "components"])
+    plot_images(img, img_points, filtered_left_mask, 
+                titles=[f"original (alphs: {alpha})", "Points on original", "filtered left mask"])
 
 
-def get_components(left_mask, min_area):
-    num_labels, labels, stats, centroids = cv.connectedComponentsWithStats(left_mask, connectivity=8)
+def get_left_edge_points(labels, stats, accepted_labels):
+    edge_points = []
 
-    components = []
+    for label_id in accepted_labels:
+
+        y_start = stats[label_id, cv.CC_STAT_TOP]
+        height = stats[label_id, cv.CC_STAT_HEIGHT]
+
+        for y in range(y_start, y_start + height):
+
+            xs = np.where(labels[y] == label_id)[0]
+
+            if len(xs) > 0:
+                x = xs.max()   # rightmost pixel = road-facing edge
+                edge_points.append((x, y))
+
+    return edge_points
+
+
+def filter_left_components(left_mask, min_area=3):
+    num_labels, labels, stats, centroids = \
+        cv.connectedComponentsWithStats(left_mask, connectivity=8)
+
+    filtered_mask = np.zeros_like(left_mask)
+    accepted_labels = []
 
     for i in range(1, num_labels):
 
@@ -58,34 +79,16 @@ def get_components(left_mask, min_area):
         if area < min_area:
             continue
 
-        x = stats[i, cv.CC_STAT_LEFT]
-        y = stats[i, cv.CC_STAT_TOP]
         w = stats[i, cv.CC_STAT_WIDTH]
         h = stats[i, cv.CC_STAT_HEIGHT]
 
         aspect_ratio = w / h
-        fill_ratio = area / (w * h)
 
-        cx, cy = centroids[i]
+        if aspect_ratio <= 1.5:
+            filtered_mask[labels == i] = 255
+            accepted_labels.append(i)
 
-        print(
-            f"#{i}: "
-            f"area={area}, "
-            f"w={w}, h={h}, "
-            f"aspect={aspect_ratio:.2f}, "
-            f"fill={fill_ratio:.2f}, "
-            f"centroid=({cx:.1f}, {cy:.1f})"
-        )
-
-        components.append({
-            "label": i,
-            "area": area,
-            "bbox": (x, y, w, h),
-            "centroid": (cx, cy)
-        })
-
-    return components
-
+    return filtered_mask, labels, stats, accepted_labels
 
 def draw_components(img_bgr, components):
 
@@ -99,7 +102,6 @@ def draw_components(img_bgr, components):
         cv.circle(output, (int(cx), int(cy)), 3, (0, 255, 0), -1)
 
     return output
-
 
 
 def get_left_candidates(img_bgr, roi_mask):
@@ -162,6 +164,7 @@ def plot_images(*images, titles=None, cols=3):
 
 def darken(img, alpha=1.00):
     return cv.convertScaleAbs(img, alpha=alpha)
+
 
 if __name__ == '__main__':
     main()
