@@ -13,17 +13,12 @@ CANNY_LOW = 20
 CANNY_HIGH = 60
 GUASSIAN_KERNEL = (3, 3)
 
-Y_REF = 95
-
-MIN_LEFT_INLIERS = 10
+Y_REF = 80
 MIN_LEFT_Y_SPAN = 20
-
-# How far outside the observed inlier range we're willing to extrapolate
-MAX_EXTRAPOLATION = 10
 
 
 def main():
-    img = cv.imread("imgs/3333_cam_image_array_.jpg")
+    img = cv.imread("imgs/curves/6.jpg")
 
     roi_mask = np.zeros_like(cv.cvtColor(img, cv.COLOR_BGR2GRAY))
 
@@ -48,18 +43,26 @@ def main():
 
     left_curve, inliers = get_left_boundary(left_edge_points)
 
+    left_valid = validate_left_boundary(left_edge_points, inliers)
+    if left_valid:
+        x_left = np.polyval(left_curve, Y_REF)
+        print(f"Left boundary at y={Y_REF}: x={x_left:.2f}")
+    else:
+        x_left = None
+        print("Left boundary detection FAILED")
     #---------------------------------------------------------------------------------------------------------------------------#
     ransac_img = img.copy()
-    for i, (x, y) in enumerate(left_edge_points):
+    if inliers is not None:
+        for i, (x, y) in enumerate(left_edge_points):
 
-        if inliers[i]:
-            # Green = trusted
-            color = (0, 255, 0)
-        else:
-            # Red = rejected
-            color = (0, 0, 255)
+            if inliers[i]:
+                # Green = trusted
+                color = (0, 255, 0)
+            else:
+                # Red = rejected
+                color = (0, 0, 255)
 
-        cv.circle(ransac_img, (x, y), 1, color, -1)
+            cv.circle(ransac_img, (x, y), 1, color, -1)
 
     if left_curve is not None:
         y_values = np.arange(45, 120) # Starts from 45 because this is the beginning of our ROI mask
@@ -78,16 +81,28 @@ def main():
                 titles=[f"original (alphs: {alpha})", "filtered left mask", "RANSAC result"])
 
 
-def validate_left_boundary(edge_points, inliers, y_ref=Y_REF):
+def validate_left_boundary(edge_points, inliers):
     if inliers is None:
         return False
 
     points = np.array(edge_points, dtype=np.float64)
     inlier_points = points[inliers]
-    
+
+    inlier_ys = inlier_points[:, 1]
+    y_min = np.min(inlier_ys)
+    y_max = np.max(inlier_ys)
+
+    y_span = y_max - y_min
+
+    print(f"y_min: {y_min}, y_max: {y_max}")
+
+    if y_span < MIN_LEFT_Y_SPAN:
+        return False
+
+    return True
 
 
-def get_left_boundary(edge_points, iterations=200, residual_treshold=3.0):
+def get_left_boundary(edge_points, iterations=200, residual_threshold=3.0):
 
     # 3 points are required to fit a curve
     if len(edge_points) < 3:
@@ -124,7 +139,7 @@ def get_left_boundary(edge_points, iterations=200, residual_treshold=3.0):
         # Calculate residual
         residuals = np.abs(predicted_xs - xs)
 
-        inliers = residuals <= residual_treshold
+        inliers = residuals <= residual_threshold
 
         count = np.sum(inliers)
 
