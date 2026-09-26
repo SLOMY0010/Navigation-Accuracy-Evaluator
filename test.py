@@ -11,11 +11,19 @@ YELLOW_WRAP_MAX_HSV = np.array([179, 255, 255])
 
 CANNY_LOW = 20
 CANNY_HIGH = 60
-GUASSIAN_KERNAL = (3, 3)
+GUASSIAN_KERNEL = (3, 3)
+
+Y_REF = 95
+
+MIN_LEFT_INLIERS = 10
+MIN_LEFT_Y_SPAN = 20
+
+# How far outside the observed inlier range we're willing to extrapolate
+MAX_EXTRAPOLATION = 10
 
 
 def main():
-    img = cv.imread("imgs/437_cam_image_array_.jpg")
+    img = cv.imread("imgs/3333_cam_image_array_.jpg")
 
     roi_mask = np.zeros_like(cv.cvtColor(img, cv.COLOR_BGR2GRAY))
 
@@ -38,12 +46,106 @@ def main():
     filtered_left_mask, labels, stats, accepted_labels = filter_left_components(left_candidates)
     left_edge_points = get_left_edge_points(labels, stats, accepted_labels)
 
-    img_points = img.copy()
-    for x, y, in left_edge_points:
-        cv.circle(img_points, (x, y), 1, (0, 0, 255), -1)
+    left_curve, inliers = get_left_boundary(left_edge_points)
 
-    plot_images(img, img_points, filtered_left_mask, 
-                titles=[f"original (alphs: {alpha})", "Points on original", "filtered left mask"])
+    #---------------------------------------------------------------------------------------------------------------------------#
+    ransac_img = img.copy()
+    for i, (x, y) in enumerate(left_edge_points):
+
+        if inliers[i]:
+            # Green = trusted
+            color = (0, 255, 0)
+        else:
+            # Red = rejected
+            color = (0, 0, 255)
+
+        cv.circle(ransac_img, (x, y), 1, color, -1)
+
+    if left_curve is not None:
+        y_values = np.arange(45, 120) # Starts from 45 because this is the beginning of our ROI mask
+        x_values = np.polyval(left_curve, y_values)
+
+        # Only draw positions that are actually inside the image
+        valid = ((x_values >= 0) & (x_values < img.shape[1]))
+
+        curve_points = np.column_stack((x_values[valid], y_values[valid])).astype(np.int32)
+
+        # Connect curve_points
+        cv.polylines(ransac_img, [curve_points.reshape(-1, 1, 2)], False, (255, 0, 0), 1)
+
+
+    plot_images(img, filtered_left_mask, ransac_img,
+                titles=[f"original (alphs: {alpha})", "filtered left mask", "RANSAC result"])
+
+
+def validate_left_boundary(edge_points, inliers, y_ref=Y_REF):
+    if inliers is None:
+        return False
+
+    points = np.array(edge_points, dtype=np.float64)
+    inlier_points = points[inliers]
+    
+
+
+def get_left_boundary(edge_points, iterations=200, residual_treshold=3.0):
+
+    # 3 points are required to fit a curve
+    if len(edge_points) < 3:
+        return None, None
+
+    points = np.array(edge_points, dtype=np.float64)
+
+    xs = points[:, 0]
+    ys = points[:, 1]
+
+    rng = np.random.default_rng(42)
+
+    best_inliers = None
+    best_count = 0
+    best_mean_residual = np.inf
+
+    for _ in range(iterations):
+
+        # Pick 3 sample points
+        sample_points = rng.choice(len(points), size=3, replace=False)
+        sample_xs = xs[sample_points]
+        sample_ys = ys[sample_points]
+
+        # The points must not be in the same y level
+        if len(np.unique(sample_ys)) < 3:
+            continue
+
+        # Fit a curve through the sample points
+        coefficients = np.polyfit(sample_ys, sample_xs, 2)
+
+        # Predict xs for all actual ys
+        predicted_xs = np.polyval(coefficients, ys)
+
+        # Calculate residual
+        residuals = np.abs(predicted_xs - xs)
+
+        inliers = residuals <= residual_treshold
+
+        count = np.sum(inliers)
+
+        if count < 3:
+            continue
+
+        mean_residual = np.mean(residuals[inliers])
+
+        # Criteria: largest inliers, if tie, smallest error
+        if count > best_count or count == best_count and mean_residual < best_mean_residual:
+            best_count = count
+            best_inliers = inliers
+            best_mean_residual = mean_residual
+
+    if best_inliers is None:
+        return None, None
+
+    # Trusted RANSAC points are found, now fit through all of them:
+    final_coefficients = np.polyfit(ys[best_inliers], xs[best_inliers], 2)
+
+    return final_coefficients, best_inliers
 
 
 def get_left_edge_points(labels, stats, accepted_labels):
@@ -114,7 +216,7 @@ def get_left_candidates(img_bgr, roi_mask):
 
 def get_right_candidates(img_bgr, roi_mask):
     gray = cv.cvtColor(img_bgr, cv.COLOR_BGR2GRAY)
-    blur = cv.GaussianBlur(gray, GUASSIAN_KERNAL, 0)
+    blur = cv.GaussianBlur(gray, GUASSIAN_KERNEL, 0)
     canny_edges = cv.Canny(blur, threshold1=CANNY_LOW, threshold2=CANNY_HIGH)
 
     return cv.bitwise_and(canny_edges, roi_mask)
