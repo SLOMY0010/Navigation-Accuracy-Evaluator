@@ -2,6 +2,7 @@ import cv2 as cv
 import matplotlib.pyplot as plt
 import numpy as np
 import math
+from sys import argv
 
 YELLOW_MIN_HSV = np.array([0, 30, 60])
 YELLOW_MAX_HSV = np.array([40, 255, 255])
@@ -13,12 +14,16 @@ CANNY_LOW = 20
 CANNY_HIGH = 60
 GUASSIAN_KERNEL = (3, 3)
 
+# Values taken from many real sample images
+MIN_LANE_WIDTH = 74
+MAX_LANE_WIDTH = 85 
+
 Y_REF = 80
 MIN_LEFT_Y_SPAN = 20
 
 
 def main():
-    img = cv.imread("imgs/curves/6.jpg")
+    img = cv.imread(argv[1])
 
     roi_mask = np.zeros_like(cv.cvtColor(img, cv.COLOR_BGR2GRAY))
 
@@ -44,16 +49,41 @@ def main():
     left_curve, inliers = get_left_boundary(left_edge_points)
 
     left_valid = validate_left_boundary(left_edge_points, inliers)
-    if left_valid:
-        x_left = np.polyval(left_curve, Y_REF)
-        print(f"Left boundary at y={Y_REF}: x={x_left:.2f}")
-    else:
-        x_left = None
-        print("Left boundary detection FAILED")
+    # if left_valid:
+    #     x_left = np.polyval(left_curve, Y_REF)
+    #     print(f"Left boundary at y={Y_REF}: x={x_left:.2f}")
+    # else:
+    #     x_left = None
+    #     print("Left boundary detection FAILED")
     #---------------------------------------------------------------------------------------------------------------------------#
+    ransac_img = draw_left_curve(img, left_curve, left_edge_points,inliers)
+
+    edge_xs = np.where(right_candidates[Y_REF] > 0)[0]
+    grouped_xs = np.array()
+    for i in range(len(edge_xs) -1):
+        if edge_xs[i+1] - edge_xs[i] == 1:
+            grouped_xs.append(np.mean([edge_xs[i], edge_xs[i+1]]))
+
+    x_left = np.polyval(left_curve, Y_REF)
+    x_right = np.where(grouped_xs > x_left)[0]
+
+    debug_img = img.copy()
+    debug_img = draw_left_curve(img, left_curve, left_edge_points, inliers)
+    cv.line(debug_img, (0, Y_REF), (img.shape[1] - 1, Y_REF), (0, 255, 255), 1)
+    for x in edge_xs:
+        cv.circle(debug_img, (int(x), Y_REF), 2, (0, 0, 255), -1)
+
+    plot_images(img, right_candidates, debug_img,filtered_left_mask, 
+                titles=[f"original (alphs: {alpha})", "Canny candidates", "Edges at reference row", "filtered left mask"])
+
+
+    
+
+
+def draw_left_curve(img, curve, edge_points, inliers):
     ransac_img = img.copy()
     if inliers is not None:
-        for i, (x, y) in enumerate(left_edge_points):
+        for i, (x, y) in enumerate(edge_points):
 
             if inliers[i]:
                 # Green = trusted
@@ -64,9 +94,9 @@ def main():
 
             cv.circle(ransac_img, (x, y), 1, color, -1)
 
-    if left_curve is not None:
+    if curve is not None:
         y_values = np.arange(45, 120) # Starts from 45 because this is the beginning of our ROI mask
-        x_values = np.polyval(left_curve, y_values)
+        x_values = np.polyval(curve, y_values)
 
         # Only draw positions that are actually inside the image
         valid = ((x_values >= 0) & (x_values < img.shape[1]))
@@ -76,9 +106,8 @@ def main():
         # Connect curve_points
         cv.polylines(ransac_img, [curve_points.reshape(-1, 1, 2)], False, (255, 0, 0), 1)
 
+    return ransac_img
 
-    plot_images(img, filtered_left_mask, ransac_img,
-                titles=[f"original (alphs: {alpha})", "filtered left mask", "RANSAC result"])
 
 
 def validate_left_boundary(edge_points, inliers):
