@@ -4,6 +4,7 @@ import numpy as np
 import math
 from sys import argv
 from pathlib import Path
+import csv
 
 YELLOW_MIN_HSV = np.array([0, 30, 60])
 YELLOW_MAX_HSV = np.array([40, 255, 255])
@@ -21,11 +22,159 @@ MAX_LANE_WIDTH = 88
 
 Y_REF = 80
 MIN_LEFT_Y_SPAN = 20
+MIN_LEFT_INLIERS = 5
+
 
 
 def main():
-    results = process_lighting_condition(argv[1])
+    condition_dir = Path(argv[1])
+
+    output_dir = Path("/mnt/e/Thesis_experimentation/nav-acc/results") / condition_dir.name
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    failure_dir = output_dir / "failed_frames"
+
+    results = process_lighting_condition(condition_dir, failure_dir)
+
+    save_frame_results_csv(results, output_dir / "frame_results.csv")
+
+    tub_summaries = get_tub_summaries(results)
+
+    save_tub_summaries_csv(tub_summaries, output_dir / "tub_summary.csv")
+
     summarize_results(results)
+
+    print(f"\nResults saved to: {output_dir}")
+
+
+def save_frame_results_csv(results, filepath):
+    fieldnames = [
+        "tub",
+        "image",
+        "valid",
+        "failure_reason",
+        "x_left",
+        "x_right",
+        "lane_width",
+        "lane_center",
+        "camera_center",
+        "signed_pixel_error",
+        "absolute_pixel_error",
+        "signed_normalized_error",
+        "absolute_normalized_error"
+    ]
+
+    with open(filepath, "w", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(results)
+
+
+def save_tub_summaries_csv(summaries, filepath):
+    fieldnames = [
+        "tub",
+        "total_frames",
+        "valid_detections",
+        "detection_failures",
+        "failure_rate",
+        "mean_absolute_normalized_error",
+        "median_absolute_normalized_error"
+    ]
+
+    with open(filepath, "w", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(summaries)
+
+
+def save_failure_debug(img, img_path, failure_reason, failure_root, tub_name,left_curve=None, left_edge_points=None, inliers=None, right_candidates=None, x_left=None):
+
+    if left_edge_points is None:
+        left_edge_points = []
+
+    debug_img = draw_left_curve(img, left_curve, left_edge_points, inliers)
+
+    # Draw reference row
+    cv.line(debug_img, (0, Y_REF), (img.shape[1] - 1, Y_REF), (0, 255, 255), 1)
+
+    # Draw Canny candidates at reference row
+    if right_candidates is not None:
+        edge_xs = np.where(right_candidates[Y_REF] > 0)[0]
+
+        for x in edge_xs:
+            cv.circle(debug_img, (int(x), Y_REF), 2, (0, 0, 255), -1)
+
+        # Draw grouped Canny edges slightly larger
+        grouped_xs = group_xs(edge_xs)
+
+        for x in grouped_xs:
+            cv.circle(debug_img, (int(round(x)), Y_REF), 3, (255, 0, 255), 1)
+
+    # Draw left boudnary at reference row
+    if x_left is not None:
+        x_left_int = int(round(x_left))
+
+        if 0 <= x_left_int < img.shape[1]:
+            cv.circle(debug_img, (x_left_int, Y_REF), 4, (255, 255, 0), -1)
+
+    # Put failure reason on the image
+    text = f"FAIL: {failure_reason}"    
+    cv.putText(debug_img, text, (5, 15), cv.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 0), 2)
+    cv.putText(debug_img, text, (4, 14), cv.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
+
+    tub_dir = Path(failure_root) / tub_name
+    tub_dir.mkdir(parents=True, exist_ok=True)
+
+    output_path = tub_dir / (f"{img_path.stem}___{failure_reason}.jpg")
+    cv.imwrite(str(output_path), debug_img)    
+
+
+def get_tub_summaries(results):
+    tubs = {}
+
+    for result in results:
+        tub = result["tub"]
+
+        if tub not in tubs:
+            tubs[tub] = []
+
+        tubs[tub].append(result)
+
+    summaries = []
+
+    for tub, tub_results in sorted(tubs.items()):
+        summary = calculate_summary(tub_results)
+        summary["tub"] = tub
+        summaries.append(summary)
+
+    return summaries
+
+
+def calculate_summary(results):
+    valid_results = [r for r in results if r["valid"]]
+
+    total = len(results)
+    valid = len(valid_results)
+    failed = total - valid
+
+    if valid > 0:
+        errors = np.array([r['absolute_normalized_error'] for r in valid_results])
+
+        mean_error = np.mean(errors)
+        median_error = np.median(errors)
+        
+    else:
+        mean_error = None
+        median_error = None
+
+    return {
+        "total_frames": total,
+        "valid_detections": valid,
+        "detection_failures": failed,
+        "failure_rate": failed / total * 100 if total > 0 else 0,
+        "mean_absolute_normalized_error": mean_error,
+        "median_absolute_normalized_error": median_error
+    }
 
 
 def summarize_results(results):
@@ -61,7 +210,7 @@ def summarize_results(results):
     )
 
 
-def process_lighting_condition(directory):
+def process_lighting_condition(directory, failure_root):
     condition_dir = Path(directory)
 
     image_paths = sorted(condition_dir.rglob("*_cam_image_array_.jpg"))
@@ -72,12 +221,13 @@ def process_lighting_condition(directory):
 
     results = []
 
-    for image_path in image_paths:
+    for i, image_path in enumerate(image_paths, start=1):
 
-        result, failure_reason = evaluate_frame(image_path)
+        tub_name = image_path.relative_to(condition_dir).parts[0]
+        result, failure_reason = evaluate_frame(image_path, failure_root=failure_root, tub_name=tub_name)
 
         row = {
-            "tub": image_path.parent.name,
+            "tub": tub_name,
             "image": image_path.name,
             "valid": result is not None,
             "failure_reason": failure_reason
@@ -89,10 +239,13 @@ def process_lighting_condition(directory):
 
         results.append(row)
 
+        if i % 250 == 0:
+            print(f"Processed {i}/{len(image_paths)} frames...")
+
     return results
 
 
-def evaluate_frame(img_path):
+def evaluate_frame(img_path, failure_root=None, tub_name=None):
     """
     Evaluates visual normalized lane deviation.
     Returns to variables: results, failure_reason; in case of successful evaluation, the latter is None.
@@ -113,11 +266,11 @@ def evaluate_frame(img_path):
     ], dtype=np.int32)
     cv.fillPoly(roi_mask, [polygon], 255)
 
-
+    left_candidates = get_left_candidates(img, roi_mask)
+    right_candidates = get_right_candidates(img, roi_mask)
 
     # ---------- LEFT LANE DETECTION ---------- #
 
-    left_candidates = get_left_candidates(img, roi_mask)
     
     filtered_left_mask, labels, stats, accepted_labels = filter_left_components(left_candidates)
     
@@ -125,8 +278,20 @@ def evaluate_frame(img_path):
 
     left_curve, inliers = get_left_boundary(left_edge_points)
 
-    if not validate_left_boundary(left_edge_points, inliers):
-        return None, "left_detection_failed"
+    left_failure_reason = validate_left_boundary(left_edge_points, inliers, left_curve, img.shape[1])
+    if left_failure_reason is not None:
+        save_failure_debug(
+            img,
+            img_path,
+            left_failure_reason,
+            failure_root,
+            tub_name,
+            left_curve=left_curve,
+            left_edge_points=left_edge_points,
+            inliers=inliers,
+            right_candidates=right_candidates
+        )
+        return None, left_failure_reason
 
     x_left = np.polyval(left_curve, Y_REF)
 
@@ -134,7 +299,6 @@ def evaluate_frame(img_path):
 
     # ---------- RIGHT LANE DETECTION ---------- #
     
-    right_candidates = get_right_candidates(img, roi_mask)
 
     edge_xs = np.where(right_candidates[Y_REF] > 0)[0]
     grouped_xs = group_xs(edge_xs)
@@ -143,7 +307,20 @@ def evaluate_frame(img_path):
     valid_right_edges = grouped_xs[valid]
 
     if len(valid_right_edges)  == 0:
-        return None, "right_detection_failed"
+        save_failure_debug(
+            img,
+            img_path,
+            "right_no_valid_canny_edges",
+            failure_root,
+            tub_name,
+            left_curve=left_curve,
+            left_edge_points=left_edge_points,
+            inliers=inliers,
+            right_candidates=right_candidates,
+            x_left=x_left
+        )
+
+        return None, "right_no_valid_canny_edges"
 
     x_right = valid_right_edges[0]
 
@@ -240,23 +417,36 @@ def draw_left_curve(img, curve, edge_points, inliers):
 
 
 
-def validate_left_boundary(edge_points, inliers):
-    if inliers is None:
-        return False
+def validate_left_boundary(edge_points, inliers, left_curve, image_width):
+    if inliers is None or left_curve is None:
+        return "left_no_ransac_model"
 
     points = np.array(edge_points, dtype=np.float64)
     inlier_points = points[inliers]
 
+    if len(inlier_points) < MIN_LEFT_INLIERS:
+        return "left_too_few_inliers"
+
     inlier_ys = inlier_points[:, 1]
     y_min = np.min(inlier_ys)
     y_max = np.max(inlier_ys)
-
     y_span = y_max - y_min
-
     if y_span < MIN_LEFT_Y_SPAN:
-        return False
+        return "left_insufficient_y_span"
 
-    return True
+    # If Y_REF is inside the observed range, this is interpolation which is totally fine
+    if y_min <= Y_REF <= y_max:
+        return None
+
+    if Y_REF < y_min:
+        extrapolation = y_min - Y_REF
+    else:
+        extrapolation = Y_REF - y_max
+
+    if extrapolation > y_span:
+        return "left_excessive_extrapolation"
+
+    return None
 
 
 def get_left_boundary(edge_points, iterations=200, residual_threshold=3.0):
@@ -340,8 +530,7 @@ def get_left_edge_points(labels, stats, accepted_labels):
 
 
 def filter_left_components(left_mask, min_area=3):
-    num_labels, labels, stats, centroids = \
-        cv.connectedComponentsWithStats(left_mask, connectivity=8)
+    num_labels, labels, stats, centroids = cv.connectedComponentsWithStats(left_mask, connectivity=8)
 
     filtered_mask = np.zeros_like(left_mask)
     accepted_labels = []
@@ -349,14 +538,18 @@ def filter_left_components(left_mask, min_area=3):
     for i in range(1, num_labels):
 
         area = stats[i, cv.CC_STAT_AREA]
-
         if area < min_area:
             continue
 
         w = stats[i, cv.CC_STAT_WIDTH]
         h = stats[i, cv.CC_STAT_HEIGHT]
-
         aspect_ratio = w / h
+
+        cx, cy = centroids[i]
+
+        # Reject components in the far right side
+        if cx > left_mask.shape[1] * 0.65:
+            continue
 
         if aspect_ratio <= 1.5:
             filtered_mask[labels == i] = 255
