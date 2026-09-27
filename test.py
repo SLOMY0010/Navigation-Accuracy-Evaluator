@@ -61,7 +61,7 @@ def main():
 
     edge_xs = np.where(right_candidates[Y_REF] > 0)[0]
     grouped_xs = group_xs(edge_xs)
-
+    print("shape: ", img.shape)
     x_left = np.polyval(left_curve, Y_REF)
     lane_widths = grouped_xs - x_left
     valid = ((lane_widths >= MIN_LANE_WIDTH) & (lane_widths <= MAX_LANE_WIDTH))
@@ -79,15 +79,55 @@ def main():
     else:
         x_right = None
         print("Right boundary detection FAILED")
+        return
+
+    result = calculate_lane_error(x_left, x_right, img.shape[1])
+    print(
+        f"\nLane center: {result['lane_center']:.2f}\n"
+        f"Pixel error: {result['signed_pixel_error']:.2f}px\n"
+        f"Normalized error: "
+        f"{result['signed_normalized_error']:.3f}\n"
+        f"Absolute normalized error: "
+        f"{result['absolute_normalized_error']:.3f}\n"
+    )
 
     debug_img = img.copy()
     debug_img = draw_left_curve(img, left_curve, left_edge_points, inliers)
+    cv.circle(debug_img, (int(result['lane_center']), Y_REF), 2, (255, 0, 255), -1)
+    cv.circle(debug_img, (int(result['camera_center']), Y_REF), 2, (255, 0, 255), -1)
     cv.line(debug_img, (0, Y_REF), (img.shape[1] - 1, Y_REF), (0, 255, 255), 1)
     for x in edge_xs:
         cv.circle(debug_img, (int(x), Y_REF), 2, (0, 0, 255), -1)
 
     plot_images(img, right_candidates, debug_img,filtered_left_mask, 
                 titles=[f"original (alphs: {alpha})", "Canny candidates", "Edges at reference row", "filtered left mask"])
+
+
+def calculate_lane_error(x_left, x_right, image_width):
+    lane_width = x_right - x_left
+
+    lane_center = (x_left + x_right) / 2
+    camera_center = (image_width - 1) / 2
+
+    signed_pixel_error = camera_center - lane_center
+    absolute_pixel_error = abs(signed_pixel_error)
+
+    half_lane_width = lane_width / 2
+
+    signed_normalized_error = signed_pixel_error / half_lane_width
+    absolute_normalized_error = abs(signed_normalized_error)
+
+    return {
+        "x_left": x_left,
+        "x_right": x_right,
+        "lane_width": lane_width,
+        "lane_center": lane_center,
+        "camera_center": camera_center,
+        "signed_pixel_error": signed_pixel_error,
+        "absolute_pixel_error": absolute_pixel_error,
+        "signed_normalized_error": signed_normalized_error,
+        "absolute_normalized_error": absolute_normalized_error
+    }
 
 
 def group_xs(xs):
