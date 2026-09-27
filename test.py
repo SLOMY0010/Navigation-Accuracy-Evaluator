@@ -63,7 +63,6 @@ def main():
     grouped_xs = group_xs(edge_xs)
 
     x_left = np.polyval(left_curve, Y_REF)
-    x_right = grouped_xs[grouped_xs > x_left][0]
     lane_widths = grouped_xs - x_left
     valid = ((lane_widths >= MIN_LANE_WIDTH) & (lane_widths <= MAX_LANE_WIDTH))
     valid_right_edges = grouped_xs[valid]
