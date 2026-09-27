@@ -15,8 +15,8 @@ CANNY_HIGH = 60
 GUASSIAN_KERNEL = (3, 3)
 
 # Values taken from many real sample images
-MIN_LANE_WIDTH = 74
-MAX_LANE_WIDTH = 85 
+MIN_LANE_WIDTH = 72
+MAX_LANE_WIDTH = 88 
 
 Y_REF = 80
 MIN_LEFT_Y_SPAN = 20
@@ -49,23 +49,37 @@ def main():
     left_curve, inliers = get_left_boundary(left_edge_points)
 
     left_valid = validate_left_boundary(left_edge_points, inliers)
-    # if left_valid:
-    #     x_left = np.polyval(left_curve, Y_REF)
-    #     print(f"Left boundary at y={Y_REF}: x={x_left:.2f}")
-    # else:
-    #     x_left = None
-    #     print("Left boundary detection FAILED")
+    if left_valid:
+        x_left = np.polyval(left_curve, Y_REF)
+        print(f"Left boundary at y={Y_REF}: x={x_left:.2f}")
+    else:
+        x_left = None
+        print("Left boundary detection FAILED")
+        return
     #---------------------------------------------------------------------------------------------------------------------------#
     ransac_img = draw_left_curve(img, left_curve, left_edge_points,inliers)
 
     edge_xs = np.where(right_candidates[Y_REF] > 0)[0]
-    grouped_xs = np.array()
-    for i in range(len(edge_xs) -1):
-        if edge_xs[i+1] - edge_xs[i] == 1:
-            grouped_xs.append(np.mean([edge_xs[i], edge_xs[i+1]]))
+    grouped_xs = group_xs(edge_xs)
 
     x_left = np.polyval(left_curve, Y_REF)
-    x_right = np.where(grouped_xs > x_left)[0]
+    x_right = grouped_xs[grouped_xs > x_left][0]
+    lane_widths = grouped_xs - x_left
+    valid = ((lane_widths >= MIN_LANE_WIDTH) & (lane_widths <= MAX_LANE_WIDTH))
+    valid_right_edges = grouped_xs[valid]
+    if len(valid_right_edges) > 0:
+        x_right = valid_right_edges[0]
+        lane_width = x_right - x_left
+
+        print(
+            f"Lane detected! "
+            f"x_left={x_left:.2f}, "
+            f"x_right={x_right:.2f}, "
+            f"width={lane_width:.2f}"
+        )
+    else:
+        x_right = None
+        print("Right boundary detection FAILED")
 
     debug_img = img.copy()
     debug_img = draw_left_curve(img, left_curve, left_edge_points, inliers)
@@ -77,7 +91,31 @@ def main():
                 titles=[f"original (alphs: {alpha})", "Canny candidates", "Edges at reference row", "filtered left mask"])
 
 
+def group_xs(xs):
+    """
+    Groups adjacent pixels and returns the mean of each group in an array.
+    e.g.:
+    [100, 101, 120, 121, 130] -> [[100, 101], [120, 121], [130]] -> [100.5, 120.5, 130]
+    """
+
+    if len(xs) == 0:
+        return np.array([])
     
+    groups = []
+    current_group = [xs[0]]
+
+    for x in xs[1:]:
+
+        # If the point is adjacent to the previous one, add it to the group
+        if x - current_group[-1] == 1:
+            current_group.append(x)
+        else:
+            groups.append(current_group)
+            current_group = [x]
+
+    groups.append(current_group)
+    grouped_xs = np.array([np.mean(group) for group in groups])
+    return grouped_xs
 
 
 def draw_left_curve(img, curve, edge_points, inliers):
