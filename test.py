@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import math
 from sys import argv
+from pathlib import Path
 
 YELLOW_MIN_HSV = np.array([0, 30, 60])
 YELLOW_MAX_HSV = np.array([40, 255, 255])
@@ -23,10 +24,85 @@ MIN_LEFT_Y_SPAN = 20
 
 
 def main():
-    img = cv.imread(argv[1])
+    results = process_lighting_condition(argv[1])
+    summarize_results(results)
 
+
+def summarize_results(results):
+    valid_results = [r for r in results if r["valid"]]
+
+    total = len(results)
+    valid = len(valid_results)
+    failed = total - valid
+
+    if valid == 0:
+        print("No valid frames.")
+        return
+
+    errors = np.array([r["absolute_normalized_error"] for r in valid_results])
+    print()
+    print("----- CONDITION SUMMARY -----")
+    print(f"Total frames: {total}")
+    print(f"Valid detections: {valid}")
+    print(f"Detection failures: {failed}")
+    print(
+        f"Failure rate: "
+        f"{failed / total * 100:.2f}%"
+    )
+
+    print(
+        f"Mean absolute normalized error: "
+        f"{np.mean(errors):.3f}"
+    )
+
+    print(
+        f"Median absolute normalized error: "
+        f"{np.median(errors):.3f}"
+    )
+
+
+def process_lighting_condition(directory):
+    condition_dir = Path(directory)
+
+    image_paths = sorted(condition_dir.rglob("*_cam_image_array_.jpg"))
+
+    if len(image_paths) == 0:
+        print("No DonkeyCar images found.")
+        return []
+
+    results = []
+
+    for image_path in image_paths:
+
+        result, failure_reason = evaluate_frame(image_path)
+
+        row = {
+            "tub": image_path.parent.name,
+            "image": image_path.name,
+            "valid": result is not None,
+            "failure_reason": failure_reason
+        }
+
+        # Insert the result dictionary
+        if result is not None:
+            row.update(result)
+
+        results.append(row)
+
+    return results
+
+
+def evaluate_frame(img_path):
+    """
+    Evaluates visual normalized lane deviation.
+    Returns to variables: results, failure_reason; in case of successful evaluation, the latter is None.
+    """
+    img = cv.imread(str(img_path))
+    if img is None:
+        return None, "image_read_failed"
+
+    # Region of Interest (ROI) mask
     roi_mask = np.zeros_like(cv.cvtColor(img, cv.COLOR_BGR2GRAY))
-
     polygon = np.array([
         [0, 119],
         [0, 65],
@@ -37,70 +113,47 @@ def main():
     ], dtype=np.int32)
     cv.fillPoly(roi_mask, [polygon], 255)
 
-    alpha = 1.0
-    img = darken(img, alpha=alpha)
+
+
+    # ---------- LEFT LANE DETECTION ---------- #
 
     left_candidates = get_left_candidates(img, roi_mask)
-    right_candidates = get_right_candidates(img, roi_mask)
-
+    
     filtered_left_mask, labels, stats, accepted_labels = filter_left_components(left_candidates)
+    
     left_edge_points = get_left_edge_points(labels, stats, accepted_labels)
 
     left_curve, inliers = get_left_boundary(left_edge_points)
 
-    left_valid = validate_left_boundary(left_edge_points, inliers)
-    if left_valid:
-        x_left = np.polyval(left_curve, Y_REF)
-        print(f"Left boundary at y={Y_REF}: x={x_left:.2f}")
-    else:
-        x_left = None
-        print("Left boundary detection FAILED")
-        return
-    #---------------------------------------------------------------------------------------------------------------------------#
-    ransac_img = draw_left_curve(img, left_curve, left_edge_points,inliers)
+    if not validate_left_boundary(left_edge_points, inliers):
+        return None, "left_detection_failed"
+
+    x_left = np.polyval(left_curve, Y_REF)
+
+
+
+    # ---------- RIGHT LANE DETECTION ---------- #
+    
+    right_candidates = get_right_candidates(img, roi_mask)
 
     edge_xs = np.where(right_candidates[Y_REF] > 0)[0]
     grouped_xs = group_xs(edge_xs)
-    print("shape: ", img.shape)
-    x_left = np.polyval(left_curve, Y_REF)
     lane_widths = grouped_xs - x_left
     valid = ((lane_widths >= MIN_LANE_WIDTH) & (lane_widths <= MAX_LANE_WIDTH))
     valid_right_edges = grouped_xs[valid]
-    if len(valid_right_edges) > 0:
-        x_right = valid_right_edges[0]
-        lane_width = x_right - x_left
 
-        print(
-            f"Lane detected! "
-            f"x_left={x_left:.2f}, "
-            f"x_right={x_right:.2f}, "
-            f"width={lane_width:.2f}"
-        )
-    else:
-        x_right = None
-        print("Right boundary detection FAILED")
-        return
+    if len(valid_right_edges)  == 0:
+        return None, "right_detection_failed"
 
+    x_right = valid_right_edges[0]
+
+
+
+    # ---------- EVALUATION ---------- #
+    
     result = calculate_lane_error(x_left, x_right, img.shape[1])
-    print(
-        f"\nLane center: {result['lane_center']:.2f}\n"
-        f"Pixel error: {result['signed_pixel_error']:.2f}px\n"
-        f"Normalized error: "
-        f"{result['signed_normalized_error']:.3f}\n"
-        f"Absolute normalized error: "
-        f"{result['absolute_normalized_error']:.3f}\n"
-    )
 
-    debug_img = img.copy()
-    debug_img = draw_left_curve(img, left_curve, left_edge_points, inliers)
-    cv.circle(debug_img, (int(result['lane_center']), Y_REF), 2, (255, 0, 255), -1)
-    cv.circle(debug_img, (int(result['camera_center']), Y_REF), 2, (255, 0, 255), -1)
-    cv.line(debug_img, (0, Y_REF), (img.shape[1] - 1, Y_REF), (0, 255, 255), 1)
-    for x in edge_xs:
-        cv.circle(debug_img, (int(x), Y_REF), 2, (0, 0, 255), -1)
-
-    plot_images(img, right_candidates, debug_img,filtered_left_mask, 
-                titles=[f"original (alphs: {alpha})", "Canny candidates", "Edges at reference row", "filtered left mask"])
+    return result, None
 
 
 def calculate_lane_error(x_left, x_right, image_width):
@@ -199,8 +252,6 @@ def validate_left_boundary(edge_points, inliers):
     y_max = np.max(inlier_ys)
 
     y_span = y_max - y_min
-
-    print(f"y_min: {y_min}, y_max: {y_max}")
 
     if y_span < MIN_LEFT_Y_SPAN:
         return False
