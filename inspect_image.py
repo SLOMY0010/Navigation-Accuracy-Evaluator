@@ -251,15 +251,21 @@ def main():
         f"Absolute normalized error: "
         f"{result['absolute_normalized_error']:.3f}"
     )
+    print(
+        f"Squared pixel error: "
+        f"{result['squared_pixel_error']:.3f}"
+    )
 
     plot_images(
         img,
+        cv.bitwise_and(cv.cvtColor(img, cv.COLOR_BGR2GRAY), roi_mask),
         left_candidates,
         filtered_left_mask,
         right_candidates,
         debug_img,
         titles=[
             "Original",
+            "ROI mask",
             "Raw yellow mask",
             "Filtered yellow mask",
             "Canny",

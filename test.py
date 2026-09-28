@@ -42,6 +42,7 @@ def save_frame_results_csv(results, filepath):
         "camera_center",
         "signed_pixel_error",
         "absolute_pixel_error",
+        "squared_pixel_error",
         "signed_normalized_error",
         "absolute_normalized_error"
     ]
@@ -60,7 +61,8 @@ def save_tub_summaries_csv(summaries, filepath):
         "detection_failures",
         "failure_rate",
         "mean_absolute_normalized_error",
-        "median_absolute_normalized_error"
+        "median_absolute_normalized_error",
+        "mean_squared_pixel_error"
     ]
 
     with open(filepath, "w", newline="") as file:
@@ -141,13 +143,16 @@ def calculate_summary(results):
 
     if valid > 0:
         errors = np.array([r['absolute_normalized_error'] for r in valid_results])
+        squared_pixel_errors = np.array([r["squared_pixel_error"] for r in valid_results])
 
         mean_error = np.mean(errors)
         median_error = np.median(errors)
+        mean_squared_error = np.mean(squared_pixel_errors)
         
     else:
         mean_error = None
         median_error = None
+        mean_squared_error = None
 
     return {
         "total_frames": total,
@@ -155,7 +160,8 @@ def calculate_summary(results):
         "detection_failures": failed,
         "failure_rate": failed / total * 100 if total > 0 else 0,
         "mean_absolute_normalized_error": mean_error,
-        "median_absolute_normalized_error": median_error
+        "median_absolute_normalized_error": median_error,
+        "mean_squared_pixel_error": mean_squared_error
     }
 
 
@@ -171,6 +177,7 @@ def summarize_results(results):
         return
 
     errors = np.array([r["absolute_normalized_error"] for r in valid_results])
+    squared_pixel_errors = np.array([r["squared_pixel_error"] for r in valid_results])
     print()
     print("----- CONDITION SUMMARY -----")
     print(f"Total frames: {total}")
@@ -189,6 +196,11 @@ def summarize_results(results):
     print(
         f"Median absolute normalized error: "
         f"{np.median(errors):.3f}"
+    )
+
+    print(
+        f"Mean squared pixel error: "
+        f"{np.mean(squared_pixel_errors):.3f}"
     )
 
 
@@ -327,6 +339,8 @@ def calculate_lane_error(x_left, x_right, image_width):
     signed_pixel_error = camera_center - lane_center
     absolute_pixel_error = abs(signed_pixel_error)
 
+    squared_pixel_error = signed_pixel_error ** 2
+
     half_lane_width = lane_width / 2
 
     signed_normalized_error = signed_pixel_error / half_lane_width
@@ -340,6 +354,7 @@ def calculate_lane_error(x_left, x_right, image_width):
         "camera_center": camera_center,
         "signed_pixel_error": signed_pixel_error,
         "absolute_pixel_error": absolute_pixel_error,
+        "squared_pixel_error": squared_pixel_error,
         "signed_normalized_error": signed_normalized_error,
         "absolute_normalized_error": absolute_normalized_error
     }
