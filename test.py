@@ -334,6 +334,9 @@ def evaluate_frame(img_path, failure_root=None, tub_name=None):
 
 
 def calculate_lane_error(x_left, x_right, image_width):
+    """
+    eN = (xCamera - xLane) / (WLane / 2)
+    """
     lane_width = x_right - x_left
 
     lane_center = (x_left + x_right) / 2
