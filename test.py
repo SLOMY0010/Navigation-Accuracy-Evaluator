@@ -5,25 +5,7 @@ import math
 from sys import argv
 from pathlib import Path
 import csv
-
-YELLOW_MIN_HSV = np.array([0, 30, 60])
-YELLOW_MAX_HSV = np.array([40, 255, 255])
-# Hue wrap caused by the pink tint of the camera
-YELLOW_WRAP_MIN_HSV = np.array([175, 30, 60])
-YELLOW_WRAP_MAX_HSV = np.array([179, 255, 255])
-
-CANNY_LOW = 20
-CANNY_HIGH = 60
-GUASSIAN_KERNEL = (3, 3)
-
-# Values taken from many real sample images
-MIN_LANE_WIDTH = 72
-MAX_LANE_WIDTH = 88 
-
-Y_REF = 80
-MIN_LEFT_Y_SPAN = 20
-MIN_LEFT_INLIERS = 5
-
+from config import CANNY_HIGH, CANNY_LOW, GUASSIAN_KERNEL, MAX_LANE_WIDTH, MIN_LANE_WIDTH, MIN_LEFT_INLIERS, MIN_LEFT_Y_SPAN, Y_REF, YELLOW_MAX_HSV, YELLOW_MIN_HSV, YELLOW_WRAP_MAX_HSV, YELLOW_WRAP_MIN_HSV
 
 
 def main():
