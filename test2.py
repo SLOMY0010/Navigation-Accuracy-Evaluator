@@ -2,7 +2,7 @@ import cv2 as cv
 import matplotlib.pyplot as plt
 import numpy as np
 import math
-from sys import argv
+from sys import argv, exit
 from pathlib import Path
 import csv
 from config import CANNY_HIGH, CANNY_LOW, GAUSSIAN_KERNEL
@@ -10,8 +10,9 @@ from config import CANNY_HIGH, CANNY_LOW, GAUSSIAN_KERNEL
 ROI_TOP = 80
 Y_EVAL = 119
 MIN_LANE_WIDTH = 118
-MAX_LANE_WIDTH = 142
+MAX_LANE_WIDTH = 145
 
+# fail_limit = 7
 
 def main():
     condition_dir = Path(argv[1])
@@ -190,7 +191,7 @@ def save_failure_debug(img, img_path, failure_reason, failure_root, tub_name,lef
             cv.circle(debug_img, (x, y), 1, color, -1)
     if right_inliers is not None:
         for i, (x, y) in enumerate(right_points):
-            if left_inliers[i]:
+            if right_inliers[i]:
                 color = (0, 255, 0)
             else:
                 color = (0, 0, 255)
@@ -206,7 +207,7 @@ def save_failure_debug(img, img_path, failure_reason, failure_root, tub_name,lef
         line_points = np.column_stack((x_values[valid], y_values[valid])).astype(np.int32)
 
         if len(line_points) >= 2:
-            cv.polylines(debug_img, [line_points.reshape(-1, 1, 2)], False, (0, 255, 255), 1)
+            cv.polylines(debug_img, [line_points.reshape(-1, 1, 2)], False, (255, 0, 0), 1)
 
     if right_line is not None:
         x_values = np.polyval(right_line, y_values)
@@ -215,16 +216,16 @@ def save_failure_debug(img, img_path, failure_reason, failure_root, tub_name,lef
         line_points = np.column_stack((x_values[valid], y_values[valid])).astype(np.int32)
 
         if len(line_points) >= 2:
-            cv.polylines(debug_img, [line_points.reshape(-1, 1, 2)], False, (255, 255, 0), 1)
+            cv.polylines(debug_img, [line_points.reshape(-1, 1, 2)], False, (255, 0, 0), 1)
 
     # Failure text
     text = f"FAIL: {failure_reason}"
 
     cv.putText(
-        debug_img, text, (5, 15), cv.FONT_HERSHEY_SIMPLEX, 0.30, (0, 0, 0), 2)
+        debug_img, text, (5, 15), cv.FONT_HERSHEY_PLAIN, 0.30, (0, 0, 0), 2, lineType=cv.LINE_AA)
 
     cv.putText(
-        debug_img, text, (4, 14), cv.FONT_HERSHEY_SIMPLEX, 0.30, (255, 255, 255), 1)
+        debug_img, text, (4, 14), cv.FONT_HERSHEY_PLAIN, 0.30, (255, 255, 255), 1, lineType=cv.LINE_AA)
 
     tub_dir = Path(failure_root) / tub_name
 
@@ -437,7 +438,18 @@ def evaluate_frame(img_path, failure_root=None, tub_name=None):
         return None, "invalid_lane_geometry"
 
     lane_width = x_right - x_left
+    global fail_limit
     if not (MIN_LANE_WIDTH <= lane_width <= MAX_LANE_WIDTH):
+        # print(
+        #     img_path.name,
+        #     f"x_left={x_left:.2f}",
+        #     f"x_right={x_right:.2f}",
+        #     f"width={lane_width:.2f}",
+        #     f"Limits: {MIN_LANE_WIDTH} - {MAX_LANE_WIDTH}"
+        # )
+        # if fail_limit == 0:
+        #     exit("gg bro")
+        # fail_limit -= 1
         save_failure_debug(
             img,
             img_path,
