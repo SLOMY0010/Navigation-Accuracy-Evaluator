@@ -10,7 +10,7 @@ YELLOW_WRAP_MAX_HSV = np.array([179, 255, 255])
 # Canny edge algorithm thresholds
 CANNY_LOW = 20
 CANNY_HIGH = 60
-GUASSIAN_KERNEL = (3, 3)
+GAUSSIAN_KERNEL = (3, 3)
 
 MIN_LANE_WIDTH = 72 # Values taken from many real sample images, change only based on samples
 MAX_LANE_WIDTH = 88 

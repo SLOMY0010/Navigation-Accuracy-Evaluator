@@ -5,7 +5,9 @@ import math
 from sys import argv
 from pathlib import Path
 import csv
-from config import CANNY_HIGH, CANNY_LOW, GAUSSIAN_KERNEL, MAX_LANE_WIDTH, MIN_LANE_WIDTH, MIN_LEFT_INLIERS, MIN_LEFT_Y_SPAN, Y_REF, YELLOW_MAX_HSV, YELLOW_MIN_HSV, YELLOW_WRAP_MAX_HSV, YELLOW_WRAP_MIN_HSV
+from config import CANNY_HIGH, CANNY_LOW, GAUSSIAN_KERNEL, YELLOW_MAX_HSV, YELLOW_MIN_HSV, YELLOW_WRAP_MAX_HSV, YELLOW_WRAP_MIN_HSV
+ROI_TOP = 80
+Y_EVAL = 119
 
 
 def main():
@@ -27,6 +29,101 @@ def main():
     summarize_results(results)
 
     print(f"\nResults saved to: {output_dir}")
+
+
+def fit_boundary_line(points, iterations=200, residual_threshold=3.0):
+    if len(points) < 2:
+        return None, None
+
+    points = np.array(points, dtype=np.float64)
+
+    xs = points[:, 0]
+    ys = points[:, 1]
+
+    rng = np.random.default_rng(42)
+
+    best_inliers = None
+    best_count = 0
+    best_mean_residual = np.inf
+
+    for _ in range(iterations):
+
+        # Pick two random points
+        sample_indicies = rng.choice(len(points), size=2, replace=False)
+        sample_xs = xs[sample_indicies]        
+        sample_ys = ys[sample_indicies]
+
+        if sample_ys[0] == sample_ys[1]:
+            continue
+
+        # Fit a line
+        coefficients = np.polyfit(sample_ys, sample_xs, 1)
+
+        # Predict x for every observed y
+        predicted_xs = np.polyval(coefficients, ys)
+
+        residuals = np.abs(predicted_xs - xs)
+
+        inliers = residuals <= residual_threshold
+
+        count = np.sum(inliers)
+
+        if count < 2:
+            continue
+
+        mean_residual = np.mean(residuals[inliers])
+
+
+        if count > best_count or (count == best_count and mean_residual < best_mean_residual):
+            best_count = count
+            best_inliers = inliers
+            best_mean_residual = mean_residual
+
+    if best_inliers is None:
+        return None, None
+
+    # RANSAC found the trusted points, refit using all of them
+    final_coefficients = np.polyfit(ys[best_inliers], xs[best_inliers], 1)            
+
+    return final_coefficients, best_inliers
+   
+
+def get_boundary_points(edges):
+    left_points = []
+    right_points = []
+
+    camera_center = (edges.shape[1] - 1) / 2
+
+    for y in range(ROI_TOP, Y_EVAL + 1):
+        xs = np.where(edges[y] > 0)[0]
+
+        left_xs = xs[xs < camera_center]
+        right_xs = xs[xs > camera_center]
+
+        if len(left_xs) > 0:
+            x_left = left_xs.max()
+            left_points.append((x_left, y))
+
+        if len(right_xs) > 0:
+            x_right = right_xs.min()
+            right_points.append((x_right, y))
+
+    return left_points, right_points
+
+
+def get_bottom_edges(img, roi_mask):
+    gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+    blur = cv.GaussianBlur(gray, GAUSSIAN_KERNEL, 0)
+    edges = cv.Canny(blur, CANNY_LOW, CANNY_HIGH)
+
+    return cv.bitwise_and(edges, roi_mask)
+
+
+def get_bottom_roi_mask(img):
+    mask = np.zeros(img.shape[:2], dtype=np.uint8)
+    mask[ROI_TOP:Y_EVAL + 1, :] = 255
+    return mask
+
 
 
 def save_frame_results_csv(results, filepath):
