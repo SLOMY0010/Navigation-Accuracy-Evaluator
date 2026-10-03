@@ -11,6 +11,7 @@ ROI_TOP = 75
 Y_EVAL = 119
 MIN_LANE_WIDTH = 118
 MAX_LANE_WIDTH = 145
+CENTER_MARGIN = 5 # px
 
 # fail_limit = 7
 
@@ -35,7 +36,7 @@ def main():
     print(f"\nResults saved to: {output_dir}")
 
 
-def fit_boundary_line(points, iterations=200, residual_threshold=1.0):
+def fit_boundary_line(points, iterations=200, residual_threshold=2.0):
     if len(points) < 2:
         return None, None
 
@@ -101,8 +102,8 @@ def get_boundary_points(edges):
     for y in range(ROI_TOP, Y_EVAL + 1):
         xs = np.where(edges[y] > 0)[0]
 
-        left_xs = xs[xs < camera_center]
-        right_xs = xs[xs > camera_center]
+        left_xs = xs[xs < camera_center - CENTER_MARGIN]
+        right_xs = xs[xs > camera_center + CENTER_MARGIN]
 
         if len(left_xs) > 0:
             x_left = left_xs.max()

@@ -150,12 +150,17 @@ def main():
     for x, y in right_points:
         cv.circle(points_img, (x, y), 2, (0, 255, 255), -1)
 
-    plot_images(img, roi_view, bottom_edges, points_img, debug_img,titles=[
+
+    gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+    blur = cv.GaussianBlur(gray, (5, 5), 0)
+
+    plot_images(img, roi_view, bottom_edges, points_img, debug_img, blur,titles=[
         "Original",
         "Bottom ROI",
         "Bottom Canny",
         "Boundary points",
-        "Fitted lines"
+        "Fitted lines",
+        "Blur"
     ])
 
 
