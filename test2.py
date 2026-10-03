@@ -7,7 +7,7 @@ from pathlib import Path
 import csv
 from config import CANNY_HIGH, CANNY_LOW, GAUSSIAN_KERNEL
 
-ROI_TOP = 80
+ROI_TOP = 75
 Y_EVAL = 119
 MIN_LANE_WIDTH = 118
 MAX_LANE_WIDTH = 145
@@ -35,7 +35,7 @@ def main():
     print(f"\nResults saved to: {output_dir}")
 
 
-def fit_boundary_line(points, iterations=200, residual_threshold=3.0):
+def fit_boundary_line(points, iterations=200, residual_threshold=1.0):
     if len(points) < 2:
         return None, None
 
@@ -438,7 +438,6 @@ def evaluate_frame(img_path, failure_root=None, tub_name=None):
         return None, "invalid_lane_geometry"
 
     lane_width = x_right - x_left
-    global fail_limit
     if not (MIN_LANE_WIDTH <= lane_width <= MAX_LANE_WIDTH):
         # print(
         #     img_path.name,
@@ -453,7 +452,7 @@ def evaluate_frame(img_path, failure_root=None, tub_name=None):
         save_failure_debug(
             img,
             img_path,
-            "lane_width_out_of_range",
+            f"lane_width_out_of_range_({lane_width})",
             failure_root,
             tub_name,
             left_points=left_points,
