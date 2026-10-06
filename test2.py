@@ -25,11 +25,11 @@ def main():
 
     results = process_lighting_condition(condition_dir, failure_dir)
 
-    save_frame_results_csv(results, output_dir / "frame_results.csv")
+    save_frame_results_csv(results, output_dir / f"frame_results_{condition_dir.name}.csv")
 
     tub_summaries = get_tub_summaries(results)
 
-    save_tub_summaries_csv(tub_summaries, output_dir / "tub_summary.csv")
+    save_tub_summaries_csv(tub_summaries, output_dir / f"tub_summary_{condition_dir.name}.csv")
 
     summarize_results(results)
 
@@ -164,7 +164,8 @@ def save_tub_summaries_csv(summaries, filepath):
         "failure_rate",
         "mean_absolute_normalized_error",
         "median_absolute_normalized_error",
-        "mean_squared_pixel_error"
+        "mean_squared_pixel_error",
+        "coverage_adjusted_mse"
     ]
 
     with open(filepath, "w", newline="") as file:
@@ -267,15 +268,18 @@ def calculate_summary(results):
     if valid > 0:
         errors = np.array([r['absolute_normalized_error'] for r in valid_results])
         squared_pixel_errors = np.array([r["squared_pixel_error"] for r in valid_results])
+        coverage = valid / total
 
         mean_error = np.mean(errors)
         median_error = np.median(errors)
         mean_squared_error = np.mean(squared_pixel_errors)
+        coverage_adjusted_mse = mean_squared_error / coverage
         
     else:
         mean_error = None
         median_error = None
         mean_squared_error = None
+        coverage_adjusted_mse = np.nan
 
     return {
         "total_frames": total,
@@ -284,7 +288,8 @@ def calculate_summary(results):
         "failure_rate": failed / total * 100 if total > 0 else 0,
         "mean_absolute_normalized_error": mean_error,
         "median_absolute_normalized_error": median_error,
-        "mean_squared_pixel_error": mean_squared_error
+        "mean_squared_pixel_error": mean_squared_error,
+        "coverage_adjusted_mse": coverage_adjusted_mse
     }
 
 
